@@ -135,7 +135,7 @@ To create and hook a device context, one can do the following:
 
 We should now have a device context for a printer with hooked user-mode callbacks.
 
-We're interested in only one hook, namely `DrvEnablePDEV`. This hook is interesting in two aspects: triggering the UAF and controlling the arguments, as described earlier. To trigger the UAF vulnerability, we will call `ResetDC` inside of the hook, which will destroy the old device context. When we return from the hook, we will still be inside the first `GreResetDCInternal`, which will shortly get and call the function pointer for `DrvResetPDEV` from our old and destroyed device context with the two arguments that got returned from `DrvEnablePDEV`; the old and the new `DHPDEV`.
+We're interested in only one hook, namely `DrvEnablePDEV`. This hook is interesting in two aspects: triggering the UAF and controlling the arguments, as described earlier. To trigger the UAF vulnerability, we will call `ResetDC` inside of the hook, which will destroy the old device context. When we return from the hook, we will still be inside the first `GreResetDCInternal`, which will shortly after get and call the function pointer for `DrvResetPDEV` from our old and destroyed device context with the two arguments that got returned from `DrvEnablePDEV`; the old and the new `DHPDEV`.
 
 If your process is running with a medium integrity level, KASLR should not be an issue with the help of `EnumDeviceDrivers` and `NtQuerySystemInformation`. 
 
