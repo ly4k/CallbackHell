@@ -141,8 +141,8 @@ If your process is running with a medium integrity level, KASLR should not be an
 
 ## PoC
 
-![./images/trigger.png](https://raw.githubusercontent.com/ollypwn/CallbackHell/main/images/trigger.png)
-![./images/trigger.png](https://raw.githubusercontent.com/ollypwn/CallbackHell/main/images/dos.png)
+![./images/trigger.png](https://raw.githubusercontent.com/ly4k/CallbackHell/main/images/trigger.png)
+![./images/trigger.png](https://raw.githubusercontent.com/ly4k/CallbackHell/main/images/dos.png)
 
 ## References
 
