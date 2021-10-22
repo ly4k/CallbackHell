@@ -1,6 +1,6 @@
 # CallbackHell
 
-DoS PoC for CVE-2021-40449 (Win32k - LPE)
+Exploit for CVE-2021-40449 (Win32k - LPE)
 
 - [CallbackHell](#callbackhell)
   - [Description](#description)
@@ -28,9 +28,9 @@ The discovered exploit was written to support the following Windows products:
  - Microsoft Windows 10 (build 17763)
  - Microsoft Windows Server 2019 (build 17763)
 
-However, this proof-of-concept is merely a DoS trigger meant to be used for security researchers and alike.
-
-The PoC contains comments and a template ready to be used for fully exploiting the vulnerability.
+However, this exploit is current only tested on the following versions:
+ - Microsoft Windows 10 (build 14393)
+ - Microsoft Windows 10 (build 17763)
 
 ## Technical Writeup
 
@@ -120,9 +120,7 @@ BOOL GreResetDCInternal(
 }
 ```
 
-As can be seen from the pseudo-code, the old device context can be freed in a user-mode callback from the `hdcOpenDCW` call, and later on, the method `DrvResetPDEV` is retrieved from the old device context and called with `(po->dhpdev, poNew->dhpdev)`. These two arguments can be controlled by the user, since they are returned from the user-mode callback `DrvEnablePDEV` for each device context, respectively. It is thus possible to call a kernel function with two user-controlled arguments.
-
-Kaspersky mentions that the original exploit used GDI palette objects and a single kernel function call to achieve arbitrary memory read/write. From here, one could [steal a privileged access token](https://www.ired.team/miscellaneous-reversing-forensics/windows-kernel-internals/how-kernel-exploits-abuse-tokens-for-privilege-escalation) to gain SYSTEM privileges.
+As can be seen from the pseudo-code, the old device context can be freed in a user-mode callback from the `hdcOpenDCW` call, and later on, the method `DrvResetPDEV` is retrieved from the old device context and called with `(po->dhpdev, poNew->dhpdev)`.
 
 To create and hook a device context, one can do the following:
 
@@ -139,13 +137,16 @@ We're interested in only one hook, namely `DrvEnablePDEV`. This hook is interest
 
 If your process is running with a medium integrity level, KASLR should not be an issue with the help of `EnumDeviceDrivers` and `NtQuerySystemInformation`. 
 
+Kaspersky mentions that the original exploit used GDI palette objects and a single kernel function call to achieve arbitrary memory read/write. This exploit uses [a technique to allocate a BitMapHeader on the big pool](https://blahcat.github.io/2019/03/17/small-dumps-in-the-big-pool/) and `RtlSetAllBits` to enable all privileges on our current process token. The `BitMapHeader` will point to our current process token's `_SEP_TOKEN_PRIVILEGES`. By calling `RtlSetAllBits(BitMapHeader)`, it's possible to enable all privileges for our current process token with a single kernel function call. From here, one can abuse the new privileges to get SYSTEM. This exploit uses `SeDebugPrivilege` to inject shellcode into the `winlogon.exe` process.
+
 ## PoC
 
-![./images/trigger.png](https://raw.githubusercontent.com/ly4k/CallbackHell/main/images/trigger.png)
-![./images/trigger.png](https://raw.githubusercontent.com/ly4k/CallbackHell/main/images/dos.png)
+![./poc.png](https://raw.githubusercontent.com/ly4k/CallbackHell/main/poc.png)
 
 ## References
 
 - [https://securelist.com/mysterysnail-attacks-with-windows-zero-day/104509/](https://securelist.com/mysterysnail-attacks-with-windows-zero-day/104509/)
 - [https://github.com/siberas/CVE-2016-3309_Reloaded/](https://github.com/siberas/CVE-2016-3309_Reloaded/)
 - [https://www.ired.team/miscellaneous-reversing-forensics/windows-kernel-internals/how-kernel-exploits-abuse-tokens-for-privilege-escalation](https://www.ired.team/miscellaneous-reversing-forensics/windows-kernel-internals/how-kernel-exploits-abuse-tokens-for-privilege-escalation)
+- [https://github.com/KaLendsi/CVE-2021-40449-Exploit](https://github.com/KaLendsi/CVE-2021-40449-Exploit)
+- [https://mp.weixin.qq.com/s/AcFS0Yn9SDuYxFnzbBqhkQ](https://mp.weixin.qq.com/s/AcFS0Yn9SDuYxFnzbBqhkQ)
