@@ -210,7 +210,7 @@ BOOL SetupUsermodeCallbackHook()
     // Loop over printers
     for (DWORD i = 0; i < pcbReturned; i++)
     {
-        printerInfo = &pPrinterEnum[0];
+        printerInfo = &pPrinterEnum[i];
 
         printf("[*] Using printer: %ws\n", printerInfo->pPrinterName);
 
